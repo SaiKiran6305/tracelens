@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "TraceLens"
+description = "Record developer user journeys, inspect real API evidence and compare persisted runs against a saved baseline."
+version = "1.0.0"
+id = "artifacts/tracelens"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18762
+
+[services.development]
+run = "pnpm --filter @workspace/tracelens run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/tracelens", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/tracelens/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18762"
+BASE_PATH = "/"

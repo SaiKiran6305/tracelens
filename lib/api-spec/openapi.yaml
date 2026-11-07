@@ -1,0 +1,275 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 1.0.0
+  description: TraceLens journey recording and evidence comparison
+servers:
+  - url: /api
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Health
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthStatus" }
+  /summary:
+    get:
+      operationId: getSummary
+      responses:
+        "200":
+          description: Workspace statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Summary" }
+  /journeys:
+    get:
+      operationId: listJourneys
+      responses:
+        "200":
+          description: Saved journeys
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Journey" } }
+    post:
+      operationId: createJourney
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JourneyInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Journey" }
+  /runs:
+    get:
+      operationId: listRuns
+      responses:
+        "200":
+          description: Recent runs
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Run" } }
+    post:
+      operationId: createRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunInput" }
+      responses:
+        "201":
+          description: Recording started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+  /runs/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getRun
+      responses:
+        "200":
+          description: Persisted run and all events, polling restores after refresh
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunDetail" }
+  /runs/{id}/events:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: ingestEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventInput" }
+      responses:
+        "201":
+          description: Event stored idempotently
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TraceEvent" }
+  /runs/{id}/finish:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: finishRun
+      responses:
+        "200":
+          description: Run completed, status derived from evidence
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+  /runs/{id}/baseline:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: setBaseline
+      responses:
+        "200":
+          description: Successful run saved as journey baseline
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Journey" }
+  /compare:
+    get:
+      operationId: compareRuns
+      parameters:
+        - { name: baselineId, in: query, required: true, schema: { type: string } }
+        - { name: runId, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Aligned comparison, no inferred root cause
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comparison" }
+  /demo/{id}/{step}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: step, in: path, required: true, schema: { type: string, enum: [cart, shipping, inventory, checkout] } }
+    post:
+      operationId: executeDemoStep
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DemoInput" }
+      responses:
+        "200":
+          description: Actual sandbox operation outcome; failures use 422 or 503 with same shape
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DemoResult" }
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+    Summary:
+      type: object
+      required: [journeys, runs, passed, failed, events, recentRuns]
+      properties:
+        journeys: { type: integer }
+        runs: { type: integer }
+        passed: { type: integer }
+        failed: { type: integer }
+        events: { type: integer }
+        recentRuns: { type: array, items: { $ref: "#/components/schemas/Run" } }
+    JourneyInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+    Journey:
+      type: object
+      required: [id, name, description, baselineId, createdAt, runCount]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        baselineId: { type: [string, "null"] }
+        createdAt: { type: string }
+        runCount: { type: integer }
+    RunInput:
+      type: object
+      required: [journeyId, variant]
+      properties:
+        journeyId: { type: string }
+        variant: { type: string, enum: [working, missing_address, transient, external] }
+        name: { type: string, maxLength: 100 }
+    Run:
+      type: object
+      required: [id, journeyId, journeyName, name, variant, status, createdAt, finishedAt, durationMs, eventCount, isBaseline, recorderError]
+      properties:
+        id: { type: string }
+        journeyId: { type: string }
+        journeyName: { type: string }
+        name: { type: string }
+        variant: { type: string }
+        status: { type: string, enum: [recording, passed, failed, unknown, incomplete] }
+        createdAt: { type: string }
+        finishedAt: { type: [string, "null"] }
+        durationMs: { type: integer }
+        eventCount: { type: integer }
+        isBaseline: { type: boolean }
+        recorderError: { type: [string, "null"] }
+    EventInput:
+      type: object
+      required: [eventId, actionId, stepId, kind, label]
+      properties:
+        eventId: { type: string, maxLength: 100 }
+        actionId: { type: string, maxLength: 100 }
+        traceId: { type: string, maxLength: 100 }
+        parentId: { type: [string, "null"], maxLength: 100 }
+        stepId: { type: string, maxLength: 100 }
+        kind: { type: string, enum: [click, navigation, api, internal, recorder, outcome] }
+        label: { type: string, maxLength: 200 }
+        method: { type: string, maxLength: 10 }
+        path: { type: string, maxLength: 300 }
+        status: { type: integer }
+        durationMs: { type: integer, minimum: 0, maximum: 3600000 }
+        request: { type: object, additionalProperties: true }
+        response: { type: object, additionalProperties: true }
+        attempt: { type: integer, minimum: 1, maximum: 10 }
+    TraceEvent:
+      allOf:
+        - { $ref: "#/components/schemas/EventInput" }
+        - type: object
+          required: [id, runId, sequence, createdAt, source]
+          properties:
+            id: { type: string }
+            runId: { type: string }
+            sequence: { type: integer }
+            createdAt: { type: string }
+            source: { type: string, enum: [browser, server] }
+    RunDetail:
+      type: object
+      required: [run, events, lastSequence]
+      properties:
+        run: { $ref: "#/components/schemas/Run" }
+        events: { type: array, items: { $ref: "#/components/schemas/TraceEvent" } }
+        lastSequence: { type: integer }
+    DemoInput:
+      type: object
+      required: [actionId]
+      properties:
+        actionId: { type: string, minLength: 1, maxLength: 100 }
+        address: { type: string, maxLength: 200 }
+    DemoResult:
+      type: object
+      required: [ok, step, message, attempt, data]
+      properties:
+        ok: { type: boolean }
+        step: { type: string }
+        message: { type: string }
+        attempt: { type: integer }
+        data: { type: object, additionalProperties: true }
+    ComparisonRow:
+      type: object
+      required: [key, label, change, reasons, baseline, current]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        change: { type: string, enum: [unchanged, changed, missing, extra] }
+        reasons: { type: array, items: { type: string } }
+        baseline: { anyOf: [ { $ref: "#/components/schemas/TraceEvent" }, { type: "null" } ] }
+        current: { anyOf: [ { $ref: "#/components/schemas/TraceEvent" }, { type: "null" } ] }
+    Comparison:
+      type: object
+      required: [baseline, current, rows, changedCount, firstDivergence, markdown]
+      properties:
+        baseline: { $ref: "#/components/schemas/Run" }
+        current: { $ref: "#/components/schemas/Run" }
+        rows: { type: array, items: { $ref: "#/components/schemas/ComparisonRow" } }
+        changedCount: { type: integer }
+        firstDivergence: { type: [string, "null"] }
+        markdown: { type: string }

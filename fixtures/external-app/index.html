@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Request desk · TraceLens integration fixture</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f5ef;color:#14203a;font:16px system-ui;line-height:1.5}main{max-width:800px;margin:50px auto;padding:24px}section{background:white;border:1px solid #dadbd5;border-radius:18px;padding:24px;margin:20px 0}label{display:block;margin:12px 0}input,select,textarea{width:100%;padding:10px;border:1px solid #aeb3bc;border-radius:6px;font:inherit}button{background:#14203a;color:white;border:0;border-radius:30px;padding:12px 20px;margin:6px;cursor:pointer}button:disabled{opacity:.5;cursor:default}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eef2f2;padding:16px;border-radius:8px}h1{line-height:1.1}small{color:#4d5a6b}
+</style>
+<main><small>SAMPLE SEPARATE-ORIGIN INTEGRATION FIXTURE · NOT A TRACELENS ROUTE</small><h1>Request desk</h1>
+<p>This small app has its own real HTTP API. Recording is optional and never proxies these requests through TraceLens.</p>
+<section><h2>Connect with your consent</h2>
+<label>Collector URL<input id="collector" placeholder="https://your-tracelens-host/api/collector"></label>
+<label>Public project identifier<input id="project"></label>
+<label>Short-lived session token<input type="password" id="session" autocomplete="off"></label>
+<label><input type="checkbox" id="consent" style="width:auto"> I consent to recording this test workflow</label>
+<button id="connect">Connect SDK</button><button id="stop" disabled>Stop &amp; flush</button><button id="detach" disabled>Detach without concluding</button>
+<div id="connection" role="status">Not connected</div>
+</section>
+<section><h2>Create a support request</h2>
+<label>Behavior<select id="behavior"><option value="working">Working</option><option value="missing">Missing title</option><option value="retry">Temporary failure, then retry</option><option value="unknown">No business outcome assertion</option></select></label>
+<label>Request title<input id="title" value="Integration verification request"></label>
+<button id="run">Run workflow</button><pre id="result" role="status">No request created.</pre>
+</section><p><small>Expected steps: prepare → ready; submit → created; confirmation → shown. Payload values and input changes are not recorded. The fixture keeps its own request state in memory for testing; TraceLens evidence is stored in PostgreSQL.</small></p>
+<script>
+let recorder=null;
+const $=id=>document.getElementById(id);
+$("connect").onclick=async()=>{
+ try {
+  if(!$("consent").checked) throw Error("Confirm consent before connecting.");
+  const base=$("collector").value.replace(/\/$/,"");
+  if(!window.TraceLens){
+   await new Promise((resolve,reject)=>{const script=document.createElement("script");script.src=base.replace(/\/collector$/,"")+"/sdk.js";script.onload=resolve;script.onerror=()=>reject(Error("SDK could not load"));document.head.appendChild(script);});
+  }
+  recorder=await TraceLens.connect({collectorUrl:base,projectId:$("project").value,session:$("session").value,consent:true,onWarning:m=>$("connection").textContent=m});
+  $("session").value="";
+  $("connection").textContent=recorder.runId?"Recording connected":"Installation verified";
+  $("stop").disabled=$("detach").disabled=!recorder.runId;
+ } catch(e){$("connection").textContent=e.message;}
+};
+$("stop").onclick=async()=>{try{const result=await recorder.stop();$("connection").textContent=JSON.stringify(result);$("stop").disabled=$("detach").disabled=true;recorder=null;}catch(e){$("connection").textContent=e.message;}};
+$("detach").onclick=()=>{recorder.detach();recorder=null;$("connection").textContent="Detached; run remains incomplete until resumed and concluded.";};
+async function step(id,fn,label){
+ if(recorder&&recorder.runId)return recorder.step(id,fn,{label});
+ return fn({actionId:crypto.randomUUID(),fetch:window.fetch.bind(window),outcome:()=>{}});
+}
+$("run").onclick=async()=>{
+ $("run").disabled=true;
+ try {
+  const mode=$("behavior").value;
+  await step("prepare",async ctx=>{
+   const results=await Promise.all([ctx.fetch("/api/options"),ctx.fetch("/api/availability")]);
+   const [options,availability]=await Promise.all(results.map(r=>r.json()));
+   const ready=results.every(r=>r.ok)&&Array.isArray(options.categories)&&options.categories.length>0&&availability.accepting===true;
+   if(ready&&mode!=="unknown")ctx.outcome("ready","Ready to submit");
+  },"Review options");
+  let created=false;
+  await step("submit",async ctx=>{
+   const body={title:mode==="missing"?"":$("title").value,actionId:ctx.actionId,transient:mode==="retry"};
+   let r=await ctx.fetch("/api/requests?private=not-recorded",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+   if(r.status===503&&mode==="retry")r=await ctx.fetch("/api/requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+   const result=await r.json();created=r.ok&&result.status==="created"&&typeof result.id==="string"&&result.id.length>0;
+   $("result").textContent=JSON.stringify(result,null,2);
+   if(mode!=="unknown"&&created)ctx.outcome("created","Request created");
+   else if(mode!=="unknown"&&r.status===422&&result.outcome==="title_required")ctx.outcome("title_required","Title required");
+  },"Submit request");
+  if(created)await step("confirmation",async ctx=>{history.pushState({},"","/#confirmation-secret-not-recorded");if(mode!=="unknown")ctx.outcome("shown","Confirmation shown");},"Confirmation");
+  if(recorder&&recorder.flush)await recorder.flush();
+ }catch(e){$("result").textContent=e.message;}finally{$("run").disabled=false;}
+};
+</script></main></html>
